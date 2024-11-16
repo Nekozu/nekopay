@@ -1,0 +1,5 @@
+flask
+pyTelegramBotAPI
+pymongo
+APScheduler==3.10.1
+python-dotenv
