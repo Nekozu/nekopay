@@ -70,6 +70,6 @@ Give a ⭐️ if this project helped you!
 
 ## 📊 Project Status
 
-![GitHub stars](https://img.shields.io/github/stars/nekozu/nekopaybot)
-![GitHub forks](https://img.shields.io/github/forks/nekozu/nekopaybot)
-![GitHub issues](https://img.shields.io/github/issues/nekozu/nekopaybot)
+![GitHub stars](https://img.shields.io/github/stars/Nekozu/nekopay)
+![GitHub forks](https://img.shields.io/github/forks/Nekozu/nekopay)
+![GitHub issues](https://img.shields.io/github/issues/Nekozu/nekopay)
