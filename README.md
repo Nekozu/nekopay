@@ -20,6 +20,7 @@ A sleek and efficient Telegram payment bot that handles transactions and automat
 - MongoDB
 - Telegram Bot Token
 - tranzzo.com Provider API Keys
+- cryptocloud.plus API key and shop_id
 
 ### Quick Start
 
@@ -41,10 +42,14 @@ cp .env.example .env
 
 Edit `.env` file with your credentials:
 ```
-BOT_TOKEN=your_telegram_bot_token
-MONGODB_URI=your_mongodb_uri
-ADMIN_USER_ID=your_telegram_user_id
-PAYMENT_PROVIDER_KEY=your_payment_provider_key
+ADMIN_CHAT_ID = # your user id here
+BOT_TOKEN = "your bot token"
+MONGO_URL = "your mongodb url"
+TRANZZO_TOKEN = "your tranzzo token. get it at @botfather"
+PAYPAL_WEEK_INVOICE = "your paypal invoice"
+PAYPAL_MONTH_INVOICE = "another paypal invoice"
+CRYPTOCLOUD_TOKEN = "crypto cloud auth token. get it at cryptocloud.plus"
+CRYPTOCLOUD_SHOP_ID = "crypto cloud shop id. get is at cryptocloud.plus"
 ```
 
 5. Run the bot:
@@ -69,7 +74,12 @@ Contributions are welcome!
 Give a ⭐️ if this project helped you!
 
 ## 📊 Project Status
+<h2 id="star_hist">Star History</h2>
 
-![GitHub stars](https://img.shields.io/github/stars/Nekozu/nekopay)
-![GitHub forks](https://img.shields.io/github/forks/Nekozu/nekopay)
-![GitHub issues](https://img.shields.io/github/issues/Nekozu/nekopay)
+<a href="https://star-history.com/#Nekozu/nekopay&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Nekozu/nekopay&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Nekozu/nekopay&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Nekozu/nekopay&type=Date"/>
+ </picture>
+</a>
