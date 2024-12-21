@@ -7,6 +7,11 @@ import sqlite3
 import requests
 import os
 from dotenv import load_dotenv
+import validators
+import hashlib
+import json
+import uuid
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +32,11 @@ PAYPAL_WEEK_INVOICE = os.getenv('PAYPAL_WEEK_INVOICE')
 PAYPAL_MONTH_INVOICE = os.getenv('PAYPAL_MONTH_INVOICE')
 CRYPTOCLOUD_TOKEN = os.getenv('CRYPTOCLOUD_TOKEN')
 CRYPTOCLOUD_SHOP_ID = os.getenv('CRYPTOCLOUD_SHOP_ID')
+KOFI_1WEEK = os.getenv('KOFI_1WEEK')
+KOFI_1MONTH = os.getenv('KOFI_1MONTH')
+CRYPTOMUS_MERCHANT_ID = os.getenv('CRYPTOMUS_MERCHANT_ID')
+CRYPTOMUS_API_KEY = os.getenv('CRYPTOMUS_API_KEY')
+OXAPAY_MERCHANT_KEY = os.getenv('OXAPAY_MERCHANT_KEY')
 
 # MongoDB setup
 client = MongoClient(MONGO_URL)
@@ -84,27 +94,27 @@ def payment_methods_keyboard():
     
     # Add premium options
     stars_button = types.InlineKeyboardButton(
-        text="Telegram Stars Payment",
+        text="Telegram Stars",
         callback_data="stars_payment"
     )
-    tranzzo_button = types.InlineKeyboardButton(
-        text="Card Payment", 
-        callback_data="tranzzo_payment"
-    )
     paypal_button = types.InlineKeyboardButton(
-        text="Paypal Payment", 
+        text="Paypal", 
         callback_data="paypal_payment"
     )
     crypto_button = types.InlineKeyboardButton(
-        text="Crypto Payment", 
+        text="Crypto", 
         callback_data="crypto_payment"
+    )
+    kofi_button = types.InlineKeyboardButton(
+        text="Kofi", 
+        callback_data="kofi_payment"
     )
     backs = types.InlineKeyboardButton(
         text="Back",
         callback_data="back"
     )
     
-    keyboard.add(stars_button, tranzzo_button, paypal_button, crypto_button, backs)
+    keyboard.add(stars_button, paypal_button, crypto_button, kofi_button, backs)
     return keyboard
 
 def paypal_keyboard():
@@ -133,11 +143,11 @@ def paynow(payment_type):
     
     # Add premium options with appropriate callback data
     week_button = types.InlineKeyboardButton(
-        text="1 Week Premium" + (" (46 Stars)" if payment_type == "stars" else " (€1/1$)"),
+        text="1 Week Premium" + (" (46 Stars)"),
         callback_data=f"{payment_type}_week"
     )
     month_button = types.InlineKeyboardButton(
-        text="1 Month Premium" + (" (276 Stars)" if payment_type == "stars" else " (€6/6$)"),
+        text="1 Month Premium" + (" (276 Stars)"),
         callback_data=f"{payment_type}_month"
     )
     backs = types.InlineKeyboardButton(
@@ -146,6 +156,27 @@ def paynow(payment_type):
     )
     
     keyboard.add(week_button, month_button, backs)
+    return keyboard
+
+def kofi():
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    week_button = types.InlineKeyboardButton(
+        text="1 Week Premium (€1/1$)", 
+        url=KOFI_1WEEK
+    )
+    month_button = types.InlineKeyboardButton(
+        text="1 Month Premium (€6/6$)", 
+        url=KOFI_1MONTH
+    )
+    photo_button = types.InlineKeyboardButton(
+        text="Send Kofi Payment link",
+        callback_data="send_payment_link"
+    )
+    backs = types.InlineKeyboardButton(
+        text="Back",
+        callback_data="back"
+    )
+    keyboard.add(week_button, month_button, photo_button, backs)
     return keyboard
 
 def setup_database():
@@ -196,11 +227,19 @@ def handleprem(call):
     keyboard = payment_methods_keyboard()
     bot.edit_message_reply_markup(call.message.chat.id, call.message.id, reply_markup=keyboard)
         
-@bot.callback_query_handler(func=lambda call: call.data in ["stars_payment", "ammer_payment", "tranzzo_payment"])
+@bot.callback_query_handler(func=lambda call: call.data in ["stars_payment"])
 def handlepay(call):
-    payment_type = "stars" if call.data == "stars_payment" else "ammer" if call.data == "ammer_payment" else "tranzzo"
+    payment_type = "stars"
     keyboard = paynow(payment_type)
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.id, reply_markup=keyboard)
+    text = """"
+    Here is payment using telegram stars
+    1. Select your premium duration
+    2. Then you will get invoice. Click it
+    3. After payment, you will automatically activated the premium!
+    
+    If you have a trouble with payment, please contact us using /start and select report problem or suggestion
+    """
+    bot.edit_message_reply_markup(text, call.message.chat.id, call.message.id, reply_markup=keyboard)
     
 @bot.callback_query_handler(func=lambda call: call.data == "back")    
 def handleback(call):
@@ -212,11 +251,6 @@ def handle_premium_selection(call):
     try:
         chat_id = call.message.chat.id
         payment_type, duration = call.data.split("_")
-        
-        # Detect user's region based on DC
-        dc_id = str(chat_id)[0:3]
-        is_europe = dc_id == "234"
-        currency = "EUR" if is_europe else "USD"
         
         # Set up prices based on selection and payment type
         if payment_type == "stars":
@@ -232,17 +266,6 @@ def handle_premium_selection(call):
                 description = "30 days of premium features"
                 currency = "XTR"
                 provider_token = ""  # Leave empty for Stars payment
-        else:  # Tranzzo payment
-            if duration == "week":
-                amount = 100 if currency == "EUR" else 100  # €1 or $1
-                title = "1 Week Premium Access"
-                description = "7 days of premium features"
-                provider_token = TRANZZO_TOKEN
-            else:
-                amount = 600 if currency == "EUR" else 600  # €6 or $6
-                title = "1 Month Premium Access"
-                description = "30 days of premium features"
-                provider_token = TRANZZO_TOKEN
 
         # Create prices array with single price
         prices = [
@@ -298,11 +321,6 @@ def handle_successful_payment(message):
         # Prepare payment data
         payment_data = {
             'user_id': str(message.from_user.id),
-            'username': message.from_user.username,
-            'payment_id': payment_info.provider_payment_charge_id,
-            'amount': payment_info.total_amount,
-            'currency': payment_info.currency,
-            'timestamp': message.date,
             'expiry_date': expiry
         }
 
@@ -349,12 +367,24 @@ def handle_successful_payment(message):
 @bot.callback_query_handler(func=lambda call: call.data == "paypal_payment")
 def handle_paypal(call):
     keyboard = paypal_keyboard()
-    text = "Pay using paypal using this link. after payment send you payment screenshot with clicking this button"
+    text = """
+    Here is a payment guide for paypal payment:
+    1. Select your premium duration
+    2. Click the invoice link
+    3. Pay it
+    4. After payment, click the send payment screenshot button to verify your payment
+    5. Send your success payment screenshot
+    6. Wait until admin accept it
+    7. Enjoy your premium features!
+    
+    If you have a trouble with payment, please contact us using /start and select report problem or suggestion
+    """
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.id, text=text, reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data == "send_payment_screenshot")
 def handle_send_payment_screenshot(call):
-    msg = bot.send_message(call.message.chat.id, "Please send your payment screenshot.")
+    force_reply = types.ForceReply(selective=True)
+    msg = bot.send_message(call.message.chat.id, "Please send your payment screenshot.", reply_markup=force_reply)
     bot.register_next_step_handler(msg, process_payment_screenshot)
 
 @bot.message_handler(content_types=['photo'])
@@ -451,8 +481,86 @@ def handle_admin_verification(call):
         logger.error(f"Error in admin verification: {e}")
         bot.answer_callback_query(call.id, f"Error processing verification: {str(e)}", show_alert=True)
 
+
 @bot.callback_query_handler(func=lambda call: call.data == "crypto_payment")
-def handle_premium_purchase(call):
+def handle_crypto(call):
+    message = """
+    Here is a payment guide for crypto payment:
+
+    Using crypto payment has a service fee and network fee, so there might be a slight difference in the amount you need to pay.
+
+    Supported currencies:
+
+    CryptoCloud:
+    - BTC (Bitcoin)
+    - ETH (Ethereum)
+    - LTC (Litecoin)
+    - USDT (TRC20)
+    - USDT (ERC20)
+    - USDC (TRC20)
+    - TUSD (TRC20)
+    - TON (Toncoin)
+
+    CryptoMus:
+    - AVAX (Avalanche)
+    - BCH (Bitcoin Cash)
+    - BNB (Binance Smart Chain)
+    - BTC (Bitcoin)
+    - DAI (Ethereum, Binance Smart Chain, Polygon)
+    - DASH (Dash)
+    - DOGE (Dogecoin)
+    - ETH (Arbitrum, Ethereum, Binance Smart Chain)
+    - HMSTR (Toncoin)
+    - LTC (Litecoin)
+    - POL (Polygon, Ethereum)
+    - SHIB (Ethereum)
+    - TON (Toncoin)
+    - TRX (Tron)
+    - USDC (Ethereum, Binance Smart Chain, Arbitrum, Polygon, Avalanche)
+    - USDT (Toncoin, Avalanche, Arbitrum, Binance Smart Chain, Ethereum, Polygon, Tron)
+    - VERSE (Ethereum)
+    - XMR (Monero)
+    
+    Oxapay:
+    - Bitcoin Cash (BCH)
+    - Binance Coin (BNB)
+    - Bitcoin (BTC)
+    - Dogecoin (DOGE)
+    - Dogs (DOGS)
+    - Ethereum (ETH)
+    - Litecoin (LTC)
+    - NotCoin (NOT)
+    - Polygon (POL)
+    - Shiba Inu (SHIB)
+    - Solana (SOL)
+    - Toncoin (TON)
+    - Tron (TRX)
+    - USD Coin (USDC)
+    - Tether (USDT)
+    - Monero (XMR)
+    
+    How to pay?
+    1. First, select the crypto gateway you want to pay here
+    2. After that, select your premium duration
+    3. You will get a payment link to pay
+    4. Open the link, and select crypto currencies also crypto network
+    5. Pay with the amount shown in the link
+    6. After payment, click the check payment button to verify your payment
+    7. Enjoy your premium features!
+    
+    If you have a trouble with payment, please contact us using /start and select report problem or suggestion
+    """
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    cryptocloud = types.InlineKeyboardButton("CryptoCloud", callback_data="cryptocloud")
+    cryptomus = types.InlineKeyboardButton("CryptoMus", callback_data="cryptomus")
+    oxapay = types.InlineKeyboardButton("Oxapay", callback_data="oxapay")
+    backs = types.InlineKeyboardButton("Back", callback_data="back")
+    keyboard.add(cryptocloud, cryptomus, oxapay, backs)
+    bot.edit_message_text(message, call.message.chat.id, call.message.id, reply_markup=keyboard)
+    
+    
+@bot.callback_query_handler(func=lambda call: call.data == "cryptocloud")
+def handle_cryptocloud(call):
     try:
         # Create keyboard with duration options
         keyboard = types.InlineKeyboardMarkup()
@@ -583,11 +691,408 @@ def check_payment_status(call):
                         bot.answer_callback_query(call.id, "Payment pending. Please complete the payment.", show_alert=True)
                         return
             
-        bot.answer_callback_query(call.id, "Payment not found or error checking status", show_alert=True)
+        bot.answer_callback_query(call.id, "Please paid the payment first", show_alert=True)
 
     except Exception as e:
         logger.error(f"Error checking payment status: {e}")
         bot.answer_callback_query(call.id, "Error checking payment status", show_alert=True)
+
+def create_sign(payload, api_key):
+    json_data = json.dumps(payload)
+    base64_data = base64.b64encode(json_data.encode()).decode()
+    return hashlib.md5(f"{base64_data}{api_key}".encode()).hexdigest()
+
+@bot.callback_query_handler(func=lambda call: call.data == "cryptomus")
+def handle_cryptomus(call):
+    try:
+        # Create keyboard with duration options
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.row(
+            types.InlineKeyboardButton("1 Week ($1)", callback_data="durationmus_1week"),
+            types.InlineKeyboardButton("1 Month ($6)", callback_data="durationmus_1month")
+        )
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Please select your premium subscription duration:",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error creating payment: {e}")
+        bot.answer_callback_query(call.id, "Error creating payment. Please try again later.", show_alert=True)  
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("durationmus_"))
+def handle_duration_selection_cryptomus(call):
+    try:
+        duration = call.data.split("_")[1]
+        amount = 1 if duration == "1week" else 6
+
+        # Cryptomus credentials
+        merchant_id = CRYPTOMUS_MERCHANT_ID
+        api_key = CRYPTOMUS_API_KEY
+
+        order_id = str(uuid.uuid4())
+        payment_data = {
+            "amount": str(amount),
+            "currency": "USD",
+            "order_id": order_id
+        }
+
+        headers = {
+            'merchant': merchant_id,
+            'sign': create_sign(payment_data, api_key),
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(
+            'https://api.cryptomus.com/v1/payment',
+            headers=headers,
+            json=payment_data
+        )
+
+        result = response.json().get('result', {})
+        payment_url = result.get('url')
+        payment_uuid = result.get('uuid')
+
+        if not payment_url or not payment_uuid:
+            raise Exception("Failed to create payment")
+
+        # Create keyboard with payment URL and check status button
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton("Pay Now", url=payment_url),
+            types.InlineKeyboardButton("Check Payment Status", callback_data=f"checkmus_{payment_uuid}_{duration}")
+        )
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"Please complete your payment of ${amount} USD\nPayment will expire in 1 hours",
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Error creating payment. Please try again.")
+        bot.send_message(ADMIN_CHAT_ID, f"Payment creation error: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("checkmus_"))
+def check_payment_status(call):
+    try:
+        _, payment_uuid, duration = call.data.split("_")
+        
+        merchant_id = CRYPTOMUS_MERCHANT_ID
+        api_key = CRYPTOMUS_API_KEY
+
+        payment_data = {
+            "uuid": payment_uuid
+        }
+
+        headers = {
+            'merchant': merchant_id,
+            'sign': create_sign(payment_data, api_key),
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(
+            'https://api.cryptomus.com/v1/payment/info',
+            headers=headers,
+            json=payment_data
+        )
+
+        result = response.json().get('result', {})
+        payment_status = result.get('payment_status')
+
+        if payment_status == 'paid':
+            # Calculate expiry date
+            expiry = datetime.now() + timedelta(weeks=1 if duration == "1week" else 4)
+            
+            # Store payment data
+            payment_data = {
+                'user_id': str(call.from_user.id),
+                'expiry_date': expiry,
+            }
+            if duration == "1week":
+                one_week_prem.insert_one(payment_data)
+            else:  
+                one_month_prem.insert_one(payment_data)
+
+            # Update user's premium status
+            users_collection.update_one(
+                {'user_id': str(call.from_user.id)},
+                {
+                    '$set': {
+                        'is_premium': True,
+                        'premium_start': datetime.now(),
+                        'premium_duration': duration,
+                        'expiry': expiry
+                    }
+                },
+                upsert=True
+            )
+
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"✨ Payment successful!\n\n▶️ Your {duration} premium is now active\n\nUse /info to check your status!",
+                reply_markup=None
+            )
+
+            bot.send_message(
+                ADMIN_CHAT_ID,
+                f"New premium user via Cryptomus: {call.from_user.username} ({call.from_user.id})"
+            )
+        else:
+            bot.answer_callback_query(
+                call.id,
+                f"Payment status: {payment_status}. Please complete payment.",
+                show_alert=True
+            )
+
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Error checking payment status. Please try again.")
+        bot.send_message(ADMIN_CHAT_ID, f"Payment status check error: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "oxapay")
+def handle_oxapay(call):
+    try:
+        # Create keyboard with duration options
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.row(
+            types.InlineKeyboardButton("1 Week ($1)", callback_data="durationoxa_1week"),
+            types.InlineKeyboardButton("1 Month ($6)", callback_data="durationoxa_1month")
+        )
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Please select your premium subscription duration:",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error creating payment: {e}")
+        bot.answer_callback_query(call.id, "Error creating payment. Please try again later.", show_alert=True)  
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("durationoxa_"))
+def handle_duration_selection_oxapay(call):
+    try:
+        duration = call.data.split("_")[1]
+        amount = 1 if duration == "1week" else 6
+        
+        # Create payment request
+        url = 'https://api.oxapay.com/merchants/request'
+        order_id = str(uuid.uuid4())
+        
+        data = {
+            'merchant': OXAPAY_MERCHANT_KEY,
+            'amount': amount,
+            'currency': 'USD',
+            'lifeTime': 1440,
+            'feePaidByPayer': 1,
+            'underPaidCover': 0,
+            'callbackUrl': 'https://t.me/nekopaybot',
+            'returnUrl': 'https://t.me/nekopaybot',
+            'description': f'Premium {duration}',
+            'orderId': order_id,
+        }
+
+        response = requests.post(url, data=json.dumps(data))
+        result = response.json()
+
+        if result.get('result') == 100:  # Success
+            payment_url = result.get('payLink')
+            track_id = result.get('trackId')
+            
+            # Create keyboard with payment URL and check status button
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+            keyboard.add(
+                types.InlineKeyboardButton("Pay Now", url=payment_url),
+                types.InlineKeyboardButton("Check Payment Status", callback_data=f"checkoxa_{track_id}_{duration}")
+            )
+
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"Please complete your payment of ${amount} USD\nPayment will expire in 24 hours",
+                reply_markup=keyboard
+            )
+        else:
+            raise Exception(f"Payment creation failed: {result.get('message')}")
+
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Error creating payment. Please try again.")
+        bot.send_message(ADMIN_CHAT_ID, f"Oxapay payment creation error: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("checkoxa_"))
+def check_oxapay_status(call):
+    try:
+        # Split the callback data correctly - only expecting 3 parts
+        _, track_id, duration = call.data.split("_")
+        
+        # Check payment status
+        url = 'https://api.oxapay.com/merchants/inquiry'
+        data = {
+            'merchant': OXAPAY_MERCHANT_KEY,
+            'trackId': track_id
+        }
+
+        response = requests.post(url, data=json.dumps(data))
+        result = response.json()
+
+        if result.get('status') == 'Paid':
+            # Calculate expiry date
+            expiry = datetime.now() + timedelta(weeks=1 if duration == "1week" else 4)
+            
+            # Store payment data
+            payment_data = {
+                'user_id': str(call.from_user.id),
+                'expiry_date': expiry,
+                'payment_track_id': track_id
+            }
+            if duration == "1week":
+                one_week_prem.insert_one(payment_data)
+            else:
+                one_month_prem.insert_one(payment_data)
+
+            # Update user's premium status
+            users_collection.update_one(
+                {'user_id': str(call.from_user.id)},
+                {
+                    '$set': {
+                        'is_premium': True,
+                        'premium_start': datetime.now(),
+                        'premium_duration': duration,
+                        'expiry': expiry
+                    }
+                },
+                upsert=True
+            )
+
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"✨ Payment successful!\n\n▶️ Your {duration} premium is now active\n\nUse /info to check your status!",
+                reply_markup=None
+            )
+
+            bot.send_message(
+                ADMIN_CHAT_ID,
+                f"New premium user via Oxapay: {call.from_user.username} ({call.from_user.id})"
+            )
+        else:
+            bot.answer_callback_query(
+                call.id,
+                f"Payment status: {result.get('status')}. Please complete payment.",
+                show_alert=True
+            )
+
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Error checking payment status. Please try again.")
+        bot.send_message(ADMIN_CHAT_ID, f"Oxapay status check error: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "kofi_payment")
+def handle_kofi(call):
+    try:
+        keyboard = kofi()
+        text = """
+        How to pay with kofi?
+        
+        1. Select the duration you want to buy at here button
+        2. Click the button below go to purchase the payment 
+        3. After payment, you will directed to payment success page. Then, you should copy your payment sucess link
+        4. Back to bot and click the button below to send your payment link
+        5. Paste your payment link
+        6. Done! Your premium will be activated
+        
+        If you have a trouble with payment, please contact our support. use /start and select report problem
+        """
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text, reply_markup=keyboard)
+    except Exception as e:
+        bot.send_message(call.message.chat.id, "An error occurred. Please try again later.")
+        bot.send_message(ADMIN_CHAT_ID, f"Error in handle_kofi: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "send_payment_link")
+def handle_send_payment_link(call):
+    try:
+        force_reply = types.ForceReply(selective=True)
+        msg = bot.send_message(
+            call.message.chat.id,
+            "Please send your Ko-fi payment link:",
+            reply_markup=force_reply
+        )
+        bot.register_next_step_handler(msg, process_payment_link)
+    except Exception as e:
+        bot.send_message(call.message.chat.id, "An error occurred. Please try again later.")
+        bot.send_message(ADMIN_CHAT_ID, f"Error in handle_send_payment_link: {str(e)}")
+
+def process_payment_link(message):
+    try:
+        if not validators.url(message.text):
+            bot.reply_to(message, "Please send a valid URL.")
+            return
+            
+        if not "ko-fi.com" in message.text.lower():
+            bot.reply_to(message, "Please send a valid Ko-fi payment link.")
+            return
+        
+        # Check if URL exists in transactions
+        transaction = transactionsCollection.find_one({"url": message.text})
+        if not transaction:
+            bot.reply_to(message, "Payment link not found in our records.")
+            return
+
+        duration = None
+        if transaction.get('type') == '710f735a09':
+            duration = "1month"
+        elif transaction.get('type') == '7108bcad50':
+            duration = "1week"
+        else:
+            bot.reply_to(message, "Invalid payment type.")
+            return
+        
+        if duration == "1week":
+            expiry = datetime.now() + timedelta(weeks=1) # 1 month
+        else:
+            expiry = datetime.now() + timedelta(weeks=4)
+        
+        payment_data = {
+            'user_id': str(message.from_user.id),
+            'expiry_date': expiry 
+        }
+
+        if duration == "1week":
+            one_week_prem.insert_one(payment_data)
+        else:
+            one_month_prem.insert_one(payment_data)
+
+        users_collection.update_one(
+            {'user_id': str(message.from_user.id)},
+            {
+                '$set': {
+                    'is_premium': True,
+                    'premium_start': datetime.now(),
+                    'premium_duration': duration,
+                    'expiry': expiry
+                }
+            },
+            upsert=True
+        )
+
+        bot.reply_to(
+            message,
+            f"✨ Thank you! Your payment has been verified!\n\n"
+            f"▶️ Your {duration} premium subscription is now active\n\n"
+            "You can check it using /info command!\n"
+            "🎉 Enjoy your premium features!"
+        )
+
+        bot.send_message(
+            ADMIN_CHAT_ID,
+            f"New premium user: {message.from_user.username} ({message.from_user.id})"
+        )
+    except Exception as e:
+        bot.reply_to(message, "An error occurred while processing your payment. Please contact support.")
+        bot.send_message(ADMIN_CHAT_ID, f"Error in process_payment_link for user {message.from_user.id}: {str(e)}")
 
 @bot.message_handler(commands=['info'])
 def user_info(message):
@@ -886,3 +1391,4 @@ def handle_admin_response(message):
 
 if __name__ == '__main__':
     bot.infinity_polling()
+
